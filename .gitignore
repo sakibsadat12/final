@@ -1,0 +1,38 @@
+# ── Competition materials (kept local only, not published) ──
+SUST_Hackathon_Preli_Problem_Statement.pdf
+SUST_Preli_Evaluation_Rubric_With_Explanations.pdf
+SUST_Preli_Team_Instructions_Manual.pdf
+SUST_Preli_Sample_Cases.json
+final_plan.md
+
+# NOTE: sample_output.json is a REQUIRED deliverable — do NOT ignore it.
+
+# ── Secrets ──
+.env
+.env.*
+!.env.example
+
+# ── Python ──
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+ENV/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# ── OS / editor ──
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
