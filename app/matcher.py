@@ -21,6 +21,15 @@ _CASE_TYPES: dict[CaseType, set[TransactionType]] = {
 _AMOUNT_TOL = 0.5
 _CHARGEABLE = (TransactionStatus.COMPLETED, TransactionStatus.PENDING)
 
+# Status that aligns with each case type. Used to disambiguate multiple
+# amount-matches toward the transaction the complaint is actually about.
+_PREFERRED_STATUS = {
+    CaseType.WRONG_TRANSFER: (TransactionStatus.COMPLETED,),
+    CaseType.PAYMENT_FAILED: (TransactionStatus.FAILED, TransactionStatus.PENDING),
+    CaseType.AGENT_CASH_IN_ISSUE: (TransactionStatus.PENDING, TransactionStatus.FAILED),
+    CaseType.MERCHANT_SETTLEMENT_DELAY: (TransactionStatus.PENDING, TransactionStatus.FAILED),
+}
+
 
 def _parse_ts(ts: str | None) -> datetime | None:
     if not ts:
@@ -62,7 +71,8 @@ def _cited_in_complaint(history: list[Transaction], complaint: str) -> list[Tran
 
 def _match_duplicate(amounts: list[float], history: list[Transaction]):
     base = [t for t in history if _amount_matches(t, amounts)] if amounts else list(history)
-    payments = [t for t in base if t.type == TransactionType.PAYMENT]
+    # A "charged twice" complaint can be about payments or transfers.
+    payments = [t for t in base if t.type in (TransactionType.PAYMENT, TransactionType.TRANSFER)]
     chargeable = [t for t in payments if t.status in _CHARGEABLE]
     groups: dict[str | None, list[Transaction]] = {}
     for t in chargeable:
@@ -96,11 +106,13 @@ def match(case_type, amounts, history, complaint):
     typed = [t for t in amount_matches if allowed and t.type in allowed]
     pool = typed if typed else amount_matches
 
-    # A failed/reversed transfer never delivered money → cannot be the live dispute.
-    if case_type == CaseType.WRONG_TRANSFER:
-        completed = [t for t in pool if t.status == TransactionStatus.COMPLETED]
-        if completed:
-            pool = completed
+    # Prefer transactions whose status aligns with the case (a failed/reversed
+    # transfer never delivered money; a failed/pending payment is the live issue).
+    pref = _PREFERRED_STATUS.get(case_type)
+    if pref:
+        kept = [t for t in pool if t.status in pref]
+        if kept:
+            pool = kept
 
     # Disambiguate by a phone number quoted in the complaint.
     phones = extract_phones(complaint)
@@ -115,8 +127,11 @@ def match(case_type, amounts, history, complaint):
     if len(pool) == 0:
         # Unique-typed fallback only when the complaint stated NO amount.
         if not amounts and allowed:
-            typed_all = [t for t in history if t.type in allowed
-                         and t.status != TransactionStatus.FAILED]
+            typed_all = [t for t in history if t.type in allowed]
+            if pref:
+                kept = [t for t in typed_all if t.status in pref]
+                if kept:
+                    typed_all = kept
             if len(typed_all) == 1:
                 return typed_all[0].transaction_id, typed_all[0], "single"
         return None, None, "none"
