@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -32,6 +33,20 @@ app = FastAPI(
     version="1.0.0",
     description="Deterministic complaint-ticket investigator for a mobile financial service.",
 )
+
+
+@app.middleware("http")
+async def _collapse_slashes(request: Request, call_next):
+    """Tolerate duplicate slashes in the path (e.g. a base URL submitted with a
+    trailing slash → '//health'). Collapses any run of slashes to one so the
+    endpoints resolve regardless of how the caller concatenates the base URL.
+    """
+    path = request.scope.get("path", "")
+    if "//" in path:
+        normalized = re.sub(r"/{2,}", "/", path)
+        request.scope["path"] = normalized
+        request.scope["raw_path"] = normalized.encode("utf-8")
+    return await call_next(request)
 
 
 @app.get("/health")
