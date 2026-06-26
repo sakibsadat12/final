@@ -11,10 +11,25 @@ import re
 _BN_DIGITS = str.maketrans("০১২৩৪৫৬৭৮৯", "0123456789")
 
 # Currency cues used to boost amount candidates. Lower-cased; Bangla kept as-is.
-_CURRENCY_CUES = ("taka", "tk", "bdt", "৳", "টাকা", "tk.", "taka.")
+_CURRENCY_CUES = ("taka", "tk", "bdt", "৳", "টাকা", "poisa", "poysa")
 
 # Time-token suffixes to exclude (e.g. "2pm", "11 am").
 _TIME_SUFFIX = re.compile(r"\s*(am|pm)\b", re.IGNORECASE)
+
+# Magnitude multipliers (English, Banglish, Bangla). Order matters: longer words
+# first so "lakh" is tried before "k".
+_MULTIPLIERS: list[tuple[str, int]] = [
+    ("crore", 10_000_000), ("কোটি", 10_000_000), ("koti", 10_000_000),
+    ("lakhs", 100_000), ("lakh", 100_000), ("lac", 100_000), ("লাখ", 100_000),
+    ("lakkh", 100_000),
+    ("thousand", 1_000), ("hajar", 1_000), ("হাজার", 1_000), ("hazar", 1_000),
+    ("k", 1_000),
+]
+_MULT_RE = re.compile(
+    r"\s*(crore|কোটি|koti|lakhs|lakh|lac|লাখ|lakkh|thousand|hajar|হাজার|hazar|k)\b",
+    re.IGNORECASE,
+)
+_MULT_VALUE = {w: v for w, v in _MULTIPLIERS}
 
 
 def bengali_to_ascii_digits(text: str) -> str:
@@ -25,6 +40,13 @@ def bengali_to_ascii_digits(text: str) -> str:
 def is_bangla(text: str) -> bool:
     """True if the text contains any character in the Bengali Unicode block."""
     return any("ঀ" <= ch <= "৿" for ch in text)
+
+
+def dominant_script(text: str) -> str:
+    """Return 'bn' if Bengali characters outnumber Latin letters, else 'en'."""
+    bn = sum(1 for ch in text if "ঀ" <= ch <= "৿")
+    latin = sum(1 for ch in text if ("a" <= ch <= "z") or ("A" <= ch <= "Z"))
+    return "bn" if bn > latin else "en"
 
 
 def normalize_phone(s: str) -> str:
@@ -60,18 +82,27 @@ def normalize_counterparty(s: str | None) -> str | None:
     return s.upper()
 
 
+def extract_phones(text: str) -> set[str]:
+    """Extract normalised phone numbers mentioned in a complaint."""
+    folded = bengali_to_ascii_digits(text)
+    out: set[str] = set()
+    for m in re.finditer(r"\+?8?8?0?1\d[\d\s\-]{7,12}\d|\b01\d{9}\b|\b\d{11}\b", folded):
+        token = re.sub(r"\D", "", m.group(0))
+        if 10 <= len(token) <= 13:
+            out.add(normalize_phone(token))
+    return out
+
+
 def parse_amounts(text: str) -> list[float]:
     """Extract plausible monetary amounts from a complaint.
 
-    Rules:
-      * Bengali numerals are converted first.
-      * Numbers that are part of an identifier (preceded by '-' or a letter, e.g.
-        ``TXN-9101``) are ignored.
-      * Phone-like numbers (10+ digits) are ignored.
-      * Time tokens (``2pm``, ``11 am``) are ignored.
-      * If any candidate sits next to a currency cue, only the cued candidates
-        are returned (higher precision); otherwise all plausible candidates are
-        returned.
+    Handles magnitude shorthand (5k → 5000, 2 lakh → 200000, ৫ হাজার → 5000),
+    decimals, and thousands separators. Numbers that are part of an identifier
+    (preceded by '-' or a letter, e.g. ``TXN-9101``), phone-like numbers
+    (10+ digits), and time tokens (``2pm``) are ignored.
+
+    Candidates that sit next to a currency cue OR carry a magnitude suffix are
+    treated as higher-confidence; if any exist, only those are returned.
     """
     folded = bengali_to_ascii_digits(text)
     lowered = folded.lower()
@@ -93,8 +124,10 @@ def parse_amounts(text: str) -> list[float]:
         if len(digits_only) >= 10:  # phone-like
             continue
 
-        # Skip time tokens like "2pm".
-        if _TIME_SUFFIX.match(folded[end:end + 4]):
+        # Skip time tokens like "2pm" (but NOT if a magnitude word follows).
+        tail = folded[end:end + 10]
+        mult_match = _MULT_RE.match(tail)
+        if _TIME_SUFFIX.match(folded[end:end + 4]) and not mult_match:
             continue
 
         try:
@@ -104,14 +137,18 @@ def parse_amounts(text: str) -> list[float]:
         if val <= 0:
             continue
 
+        has_mult = False
+        if mult_match:
+            val *= _MULT_VALUE[mult_match.group(1).lower()]
+            has_mult = True
+
         window = lowered[max(0, start - 14):min(len(lowered), end + 14)]
-        if any(cue in window for cue in _CURRENCY_CUES):
+        if has_mult or any(cue in window for cue in _CURRENCY_CUES):
             cued.append(val)
         else:
             plain.append(val)
 
     chosen = cued if cued else plain
-    # Preserve order, drop duplicates.
     seen: set[float] = set()
     out: list[float] = []
     for v in chosen:

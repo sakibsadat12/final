@@ -89,10 +89,17 @@ def ensure_safe_reply(text: str, lang: str) -> str:
 
 
 def ensure_safe_internal(text: str) -> str:
-    """Sanitise agent-facing text. Phone numbers are allowed internally."""
-    if is_safe(text, customer_facing=False):
-        return text
-    # Strip explicit refund promises / injected instructions defensively.
-    cleaned = _REFUND_PROMISE.sub("the case will be reviewed", text)
-    cleaned = _INJECTION.sub("", cleaned)
-    return cleaned.strip() or "Review the case per standard policy."
+    """Sanitise agent-facing text (agent_summary / recommended_next_action).
+
+    Neutralises injected credential requests, refund promises, third-party phone
+    numbers, and injected instructions that may have arrived via transaction_id /
+    counterparty fields. Per safety rule 4, ALL output fields must stay clean.
+    """
+    if _has_unnegated_cred_request(text) or _REFUND_PROMISE.search(text) \
+            or _INJECTION.search(text) or _PHONE_IN_TEXT.search(text):
+        cleaned = _REFUND_PROMISE.sub("the case will be reviewed", text)
+        cleaned = _CRED_REQUEST.sub("the reported transaction", cleaned)
+        cleaned = _INJECTION.sub("", cleaned)
+        cleaned = _PHONE_IN_TEXT.sub("[redacted]", cleaned)
+        return cleaned.strip() or "Review the case per standard policy."
+    return text

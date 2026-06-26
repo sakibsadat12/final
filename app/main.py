@@ -72,14 +72,17 @@ async def analyze_ticket(request: Request) -> JSONResponse:
     except (json.JSONDecodeError, UnicodeDecodeError):
         return _error(400, "invalid_json", "Request body is not valid JSON.")
     if not isinstance(data, dict):
-        return _error(422, "invalid_payload", "Request body must be a JSON object.")
+        return _error(400, "invalid_payload", "Request body must be a JSON object.")
 
-    # 3. Validate schema (invalid/missing fields, bad enums, empty complaint -> 422).
+    # 3. Validate schema. Per the spec contract: a MISSING required field is
+    #    malformed input -> 400; a present-but-invalid value (bad enum/type,
+    #    empty complaint, non-finite amount) is semantically invalid -> 422.
     try:
         req = AnalyzeRequest.model_validate(data)
     except ValidationError as exc:
+        status = 400 if any(e.get("type") == "missing" for e in exc.errors()) else 422
         return JSONResponse(
-            status_code=422,
+            status_code=status,
             content={"error": "validation_error", "detail": _format_errors(exc)},
         )
 

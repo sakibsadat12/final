@@ -40,9 +40,10 @@ def test_payload_too_large_returns_413():
     assert r.status_code == 413
 
 
-def test_missing_required_field_returns_422():
+def test_missing_required_field_returns_400():
+    # Spec: missing required field is malformed input -> 400 (not 422).
     r = client.post("/analyze-ticket", json={"ticket_id": "T"})  # no complaint
-    assert r.status_code == 422
+    assert r.status_code == 400
 
 
 def test_empty_complaint_returns_422():

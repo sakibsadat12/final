@@ -31,7 +31,7 @@ class Transaction(BaseModel):
     transaction_id: str
     timestamp: str | None = None
     type: TransactionType
-    amount: float
+    amount: float = Field(allow_inf_nan=False)
     counterparty: str | None = None
     status: TransactionStatus
 
