@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timedelta
 
 from . import config
@@ -42,9 +43,21 @@ def _latest(txns: list[Transaction]) -> Transaction:
 
 
 def _cited_in_complaint(history: list[Transaction], complaint: str) -> list[Transaction]:
+    """Transactions whose id the customer quoted verbatim.
+
+    Only ids that look like real references (contain a digit, length >= 4) are
+    considered, matched on word boundaries — so a word-like id (e.g. "WRONG")
+    that merely appears as a substring of the complaint does not false-match.
+    """
     low = complaint.lower()
-    return [t for t in history if t.transaction_id and len(t.transaction_id) >= 3
-            and t.transaction_id.lower() in low]
+    out: list[Transaction] = []
+    for t in history:
+        tid = (t.transaction_id or "").strip()
+        if len(tid) < 4 or not any(ch.isdigit() for ch in tid):
+            continue
+        if re.search(r"(?<![\w-])" + re.escape(tid.lower()) + r"(?![\w-])", low):
+            out.append(t)
+    return out
 
 
 def _match_duplicate(amounts: list[float], history: list[Transaction]):
